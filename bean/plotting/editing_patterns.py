@@ -15,6 +15,17 @@ REVCOMP = {"A": "T", "T": "A", "C": "G", "G": "C"}
 other_from = {"A": "C", "T": "G", "C": "A", "G": "T"}
 
 
+def _revcomp(seq: str) -> str:
+    return "".join(REVCOMP[b] for b in reversed(seq))
+
+
+def _guide_strand(bdata, guide: str) -> str:
+    """'-' for antisense-reporter guides, else '+'. Drives sense-strand mapping."""
+    if "strand" in bdata.guides.columns:
+        return bdata.guides.loc[guide, "strand"]
+    return "+"
+
+
 def _add_absent_edits(
     bdata,
     guide: str,
@@ -28,11 +39,16 @@ def _add_absent_edits(
     else:
         edited_db = edit_tbl.loc[edit_tbl.guide == guide, :]
         observed_rel_pos = edited_db.rel_pos.tolist()
+    # For antisense-reporter ("-") guides, find editable positions on the SENSE reporter
+    # so that absent-edit positions are in the same (sense) frame as the observed edits.
+    reporter_seq = bdata.guides.loc[guide, "reporter"]
+    if _guide_strand(bdata, guide) == "-":
+        reporter_seq = _revcomp(reporter_seq)
     edits = []
     positions = []
     for edited_base, target_alt in target_base_edits.items():
         editable_positions = np.where(
-            (np.array(list(bdata.guides.loc[guide, "reporter"])) == edited_base)
+            (np.array(list(reporter_seq)) == edited_base)
         )[0]
         for editable_pos in editable_positions:
             if editable_pos not in observed_rel_pos:
@@ -83,7 +99,14 @@ def get_edit_rates(
     ].reset_index(drop=True)
     edit_rates_agg["rep_median"] = edit_rates.iloc[:, 2:].median(axis=1)
     edit_rates_agg["rep_mean"] = edit_rates.iloc[:, 2:].mean(axis=1)
-    edit_rates_agg["rel_pos"] = edit_rates_agg.edit.map(lambda e: e.rel_pos).astype(int)
+    def _sense_rel_pos(row):
+        # map antisense-reporter positions into the sense frame so the editing window aligns
+        rp = row.edit.rel_pos
+        if row.edit.strand == "-":
+            rp = len(bdata.guides.loc[row.guide, reporter_column]) - 1 - rp
+        return int(rp)
+
+    edit_rates_agg["rel_pos"] = edit_rates_agg.apply(_sense_rel_pos, axis=1).astype(int)
 
     for guide in tqdm(
         edit_rates_agg.guide.unique(),
@@ -112,15 +135,17 @@ def get_edit_rates(
     else:
         edit_rates_agg["spacer_pos"] = edit_rates_agg.rel_pos + 1
     edit_rates_agg["base_change"] = edit_rates_agg.edit.map(
-        lambda e: e.get_base_change()
+        lambda e: e.get_abs_base_change()
     )
     edit_rates_agg.rel_pos = edit_rates_agg.rel_pos.astype(int)
-    edit_rates_agg["context"] = edit_rates_agg.apply(
-        lambda row: bdata.guides.loc[row.guide, reporter_column][
-            row.rel_pos - 1 : row.rel_pos + 1
-        ],
-        axis=1,
-    )
+
+    def _sense_context(row):
+        rep = bdata.guides.loc[row.guide, reporter_column]
+        if _guide_strand(bdata, row.guide) == "-":
+            rep = _revcomp(rep)
+        return rep[row.rel_pos - 1 : row.rel_pos + 1]
+
+    edit_rates_agg["context"] = edit_rates_agg.apply(_sense_context, axis=1)
     return edit_rates_agg
 
 
@@ -208,8 +233,14 @@ def _get_norm_rates_df(
     ).fillna(0)
 
     norm_matrix = pd.DataFrame(index=change_by_pos.index, columns=BASES)
+    # per-position base counts must be on the SENSE reporter so "-" strand guides are
+    # framed like "+" guides (otherwise the normalization denominator is complemented/mirrored)
+    sense_reporters = bdata.guides.apply(
+        lambda g: _revcomp(g.reporter) if _guide_strand(bdata, g.name) == "-" else g.reporter,
+        axis=1,
+    )
     for pos in norm_matrix.index:
-        pos_base = bdata.guides.reporter.map(
+        pos_base = sense_reporters.map(
             lambda s: s[pos] if pos < len(s) else " "
         ).values
         for b in BASES:

@@ -395,8 +395,11 @@ class ReporterScreen(Screen):
         self.layers["edits"] = np.zeros_like(
             self.X,
         ).astype(float)
-        edits["ref_base"] = edits.edit.map(lambda e: e.ref_base)
-        edits["alt_base"] = edits.edit.map(lambda e: e.alt_base)
+        # strand-aware: compare target_base_edit against the SENSE-strand base so that
+        # antisense (strand == "-") guides count under their biological base change
+        # (e.g. an ABE A>G observed as T>C on a "-" guide is counted as A>G).
+        edits["ref_base"] = edits.edit.map(lambda e: e.reverse_map[e.ref_base] if e.strand == "-" else e.ref_base)
+        edits["alt_base"] = edits.edit.map(lambda e: e.reverse_map[e.alt_base] if e.strand == "-" else e.alt_base)
         edits = edits.loc[
             (edits.ref_base.map(lambda r: r in target_base_edit))
             & (edits.ref_base.map(target_base_edit) == edits.alt_base),
