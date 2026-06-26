@@ -59,29 +59,45 @@ def filter_allele_by_base(
         allowed_ref_base = [allowed_ref_base]
     if isinstance(allowed_alt_base, str):
         allowed_alt_base = [allowed_alt_base]
+
+    def _sense_bases(edit):
+        # Compare against the SENSE-strand base change so antisense ("-") reporter
+        # edits are filtered under their biological base change (e.g. a CBE C>T
+        # observed as G>A on a "-" guide is matched against C>T). Mirrors the
+        # strand-aware logic in ReporterScreen.get_edit_from_allele.
+        if edit.strand == "-":
+            return (
+                type(edit).reverse_map[edit.ref_base],
+                type(edit).reverse_map[edit.alt_base],
+            )
+        return (edit.ref_base, edit.alt_base)
+
     if (allowed_ref_base is None and allowed_alt_base is None) + (
         allowed_base_changes is None
     ) != 1:
         print("No filters specified or misspecified filters.")
     elif allowed_base_changes is not None:
         for edit in allele.edits.copy():
+            ref_base, alt_base = _sense_bases(edit)
             if (
-                edit.ref_base not in allowed_base_changes
-                or allowed_base_changes[edit.ref_base] != edit.alt_base
+                ref_base not in allowed_base_changes
+                or allowed_base_changes[ref_base] != alt_base
             ):
                 filtered_edits += 1
                 allele.edits.remove(edit)
     elif allowed_ref_base is not None:
         for edit in allele.edits.copy():
-            if edit.ref_base not in allowed_ref_base:
+            ref_base, alt_base = _sense_bases(edit)
+            if ref_base not in allowed_ref_base:
                 filtered_edits += 1
                 allele.edits.remove(edit)
-            elif allowed_alt_base is not None and edit.alt_base not in allowed_alt_base:
+            elif allowed_alt_base is not None and alt_base not in allowed_alt_base:
                 filtered_edits += 1
                 allele.edits.remove(edit)
     else:
         for edit in allele.edits.copy():
-            if edit.alt_base not in allowed_alt_base:  # type: ignore
+            _, alt_base = _sense_bases(edit)
+            if alt_base not in allowed_alt_base:  # type: ignore
                 filtered_edits += 1
                 allele.edits.remove(edit)
     return (allele, filtered_edits)
