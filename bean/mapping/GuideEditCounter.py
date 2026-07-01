@@ -59,10 +59,19 @@ base_revcomp = {"A": "T", "T": "A", "G": "C", "C": "G"}
 
 
 def _get_stranded_guide_offset(strand: int, start_pos: int, guide_len: int) -> int:
+    """Offset o such that a reporter edit at rel_pos maps to genomic Edit.pos = o - rel_pos*strand.
+
+    These reporters are stored on the strand opposite the guide (rc(spacer) at reporter
+    index 16), so the genomic coordinate runs opposite to rel_pos*strand and the anchor is
+    NOT the (previously hardcoded) reporter_length=32. Constants below were validated
+    against GRCh38 (511/511 reporter edits, 80 guides, 6 genes) for this library's reporter
+    design (guide_len 20, guide-start-in-reporter 16). Pairs with the sign convention in
+    Edit.pos (offset - rel_pos*strand).
+    """
     if strand == -1:
-        offset = start_pos + 32 - 6 - 1
+        offset = start_pos - 10
     elif strand == 1:
-        offset = start_pos - (32 - 6 - guide_len)
+        offset = start_pos + guide_len + 15
     return offset
 
 

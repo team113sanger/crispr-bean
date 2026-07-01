@@ -1,2 +1,6 @@
 *.pyc
 *.fastq
+build/
+*.egg-info/
+bean/mapping/*.so
+bean/mapping/CRISPResso2Align.c

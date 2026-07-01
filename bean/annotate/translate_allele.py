@@ -290,7 +290,13 @@ class CDS:
         For the negative CDS, nt and edited_nt are antisense."""
         edit = Edit.from_str(edit_str)
         rel_pos = self._edit_pos_to_aa_pos(edit.pos)
-        if edit.strand == "-":
+        # At edit time self.nt is stored in +genome orientation (the revcomp to sense
+        # happens later, after all edits). The stored ref/alt bases follow the guide (edit)
+        # strand convention: '-' guides store the +strand base, '+' guides store its
+        # complement. So recover the +strand base by complementing iff edit.strand == '+'.
+        # (bean's original complemented iff edit.strand == '-', which was backwards and gave
+        # 100% false ref-mismatches on every gene, regardless of gene strand.)
+        if edit.strand == "+":
             ref_base = reverse_map[edit.ref_base]
             alt_base = reverse_map[edit.alt_base]
         else:

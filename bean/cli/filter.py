@@ -118,6 +118,8 @@ def main(args):
             map_to_filtered=True,
             allele_uns_key=allele_df_keys[-1],
             jaccard_threshold=args.jaccard_threshold,
+            reporter_length=args.reporter_length,
+            reporter_right_flank_length=args.reporter_right_flank_length,
         ).reset_index(drop=True)
         allele_df_keys.append(filtered_key)
         info(f"Filtered down to {len(bdata.uns[filtered_key])} alleles.")
