@@ -430,15 +430,30 @@ def filter_allele_prop(
 
     if retain_max:
         filtered_guide = aa_prop_filtered.index.get_level_values("guide").unique()
+        # Raw (un-normalized) counts, to enforce a minimum-abundance bar on any allele
+        # resurrected below. retain_max exists to keep a guide represented when it has
+        # real editing that just never clears the sample-proportion bar -- it should
+        # relax that bar, NOT the abundance bar. Without this, a guide whose only
+        # alleles carry a handful of reads (e.g. 1 stray read in one sample) still gets
+        # its "max" allele injected; that allele then reaches `bean run` with
+        # effective_edit_rate ~ 0 and is assigned an unconstrained, spurious mu.
+        raw_counts = alleles.set_index(["guide", allele_col]).loc[
+            :, adata.samples.index
+        ]
         append_rows = []
         for guide in tqdm(aa_prop.index.get_level_values("guide").unique().tolist()):
             if guide not in filtered_guide:
                 guide_df = aa_prop.loc[
                     aa_prop.index.get_level_values("guide") == guide,
                 ]
-                max_frequency_idx = np.nanargmax(
-                    guide_df.mean(axis=1, numeric_only=True).fillna(0)
-                )
+                guide_mean_prop = guide_df.mean(axis=1, numeric_only=True).fillna(0)
+                if guide_mean_prop.max() <= 0:
+                    continue
+                max_frequency_idx = np.nanargmax(guide_mean_prop)
+                chosen_allele = guide_df.index[max_frequency_idx]
+                # Require the chosen allele to reach allele_count_thres in some sample.
+                if raw_counts.loc[[chosen_allele]].to_numpy().max() < allele_count_thres:
+                    continue
                 append_rows.append(guide_df.iloc[[max_frequency_idx], :])
         aa_prop_filtered = pd.concat([aa_prop_filtered] + append_rows, axis=0)
 
