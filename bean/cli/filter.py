@@ -127,8 +127,13 @@ def main(args):
     if len(bdata.uns[allele_df_keys[-1]]) > 0 and not args.keep_indels:
         filtered_key = f"{allele_df_keys[-1]}_noindels"
         info("Filtering out indels...")
+        # Keep ALL substitutions (both ref and alt are real bases); drop only indels.
+        # NOTE: the old `{k: v for k, v in product("ACTG","ACTG")}` collapses via dict
+        # last-value-wins to {A:G,C:G,T:G,G:G}, which keeps only sense-alt==G edits --
+        # silently correct for ABE (target A>G) but destroys CBE (target C>T) here.
         bdata.uns[filtered_key] = bdata.filter_allele_counts_by_base(
-            {k: v for k, v in product(["A", "C", "T", "G"], ["A", "C", "T", "G"])},
+            allowed_ref_base=["A", "C", "T", "G"],
+            allowed_alt_base=["A", "C", "T", "G"],
             map_to_filtered=True,
             allele_uns_key=allele_df_keys[-1],
         ).reset_index(drop=True)

@@ -767,25 +767,34 @@ class ReporterScreen(Screen):
 
     def filter_allele_counts_by_base(
         self,
-        target_base_edits: Dict[str, str],
+        target_base_edits: Dict[str, str] = None,
         allele_uns_key="allele_counts",
         map_to_filtered=True,
         jaccard_threshold: float = 0.5,
+        allowed_ref_base=None,
+        allowed_alt_base=None,
     ):
         """
         Filter alleles based on base change.
 
         Keyword arguments:
+        target_base_edits -- {ref: alt} mapping of base changes to KEEP (strict).
+        allowed_ref_base / allowed_alt_base -- lists of allowed sense-strand ref/alt
+            bases; use these (instead of target_base_edits) to keep ALL substitutions,
+            e.g. allowed_ref_base=allowed_alt_base=["A","C","T","G"] to drop only indels.
+            A {ref: alt} dict CANNOT express "keep all substitutions" (one alt per ref).
         map_to_filtered -- Map allele to the closest filtered allele to preserve total allele count. Ignores the case where there is no alleles filtered.
         """
         allele_count_df = self.uns[allele_uns_key].copy()
-        filtered_allele, filtered_edits = zip(
-            *allele_count_df.allele.map(
-                lambda a: filter_allele_by_base(
-                    a, allowed_base_changes=target_base_edits
-                )
+        if allowed_ref_base is not None or allowed_alt_base is not None:
+            _filt = lambda a: filter_allele_by_base(
+                a, allowed_ref_base=allowed_ref_base, allowed_alt_base=allowed_alt_base
             )
-        )
+        else:
+            _filt = lambda a: filter_allele_by_base(
+                a, allowed_base_changes=target_base_edits
+            )
+        filtered_allele, filtered_edits = zip(*allele_count_df.allele.map(_filt))
         allele_count_df.loc[:, "allele"] = filtered_allele
         # Hashing on Allele object messes up the order. Converting it to str and back to allele for groupby.
         allele_count_df["str_allele"] = allele_count_df.allele.map(str)
