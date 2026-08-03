@@ -31,7 +31,7 @@ class Edit:
         else:
             assert strand in {"+", "-"}
             self.strand = strand
-        self.pos = self.rel_pos if offset is None else offset + self.rel_pos * strand
+        self.pos = self.rel_pos if offset is None else offset - self.rel_pos * strand
 
     @classmethod
     def from_str(cls, edit_str):  # pos:strand:start>end
@@ -52,7 +52,7 @@ class Edit:
         rel_pos = int(rel_pos)
         assert strand in ["+", "-"]
         strand = cls.strand_map[strand]
-        offset = pos - rel_pos * strand
+        offset = pos + rel_pos * strand
         ref_base, alt_base = base_change.split(">")
         return cls(
             rel_pos,

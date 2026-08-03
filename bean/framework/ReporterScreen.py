@@ -454,6 +454,7 @@ class ReporterScreen(Screen):
         edited_bases: Optional[Union[List[str], str]] = None,
         editable_base_start=3,
         editable_base_end=8,
+        rel_pos_is_reporter=False,
         bcmatch_thres=1,
         prior_weight: Optional[float] = None,
         return_result=False,
@@ -466,37 +467,62 @@ class ReporterScreen(Screen):
         prior_weight:
         Considering the edit rate to have prior of beta distribution with mean 0.5,
         prior weight to use when calculating posterior edit rate.
+        rel_pos_is_reporter: `editable_base_start`/`editable_base_end` index into the
+            `reporter` sequence rather than the spacer `sequence`. Set this to match the
+            coordinate frame used when building `.layers['edits']` via
+            `get_edit_mat_from_uns(..., rel_pos_is_reporter=True)` so the normalization
+            window lines up with the window edits were counted in.
         unsorted_condition_label: Editing rate is calculated only for the samples that have this string in the sample index.
         """
-        #if edited_bases is None:
-        #    edited_bases = list(self.target_base_changes.keys())
-        #if isinstance(edited_bases, str):
-        #    edited_bases = [edited_bases]
-
         if normalize_by_editable_base is None:
             normalize_by_editable_base = self.tiling
         if self.layers[count_layer] is None or self.layers[edit_layer] is None:
             raise ValueError("edits or barcode matched guide counts not available.")
         num_targetable_sites = 1.0
         if normalize_by_editable_base:
+            # `target_base_changes` may be a "C>T" / "C>T,A>G" string or a dict.
             if edited_bases is None:
-                edited_bases = list(self.target_base_changes.keys())
+                tbc = self.target_base_changes
+                if isinstance(tbc, str):
+                    edited_bases = [bc.split(">")[0] for bc in tbc.split(",")]
+                else:
+                    edited_bases = list(tbc.keys())
             if isinstance(edited_bases, str):
                 edited_bases = [edited_bases]
+            # Count editable bases in the same sequence/frame that edits were counted in.
+            # For "-" strand guides the editable base appears reverse-complemented on the
+            # stored sequence, mirroring the strand handling in get_edit_mat_from_uns.
+            seq_col = "reporter" if rel_pos_is_reporter else "sequence"
+            if seq_col not in self.guides.columns:
+                raise ValueError(
+                    f"normalize_by_editable_base needs a '{seq_col}' column in .guides."
+                )
+            reverse_map = {"A": "T", "C": "G", "G": "C", "T": "A"}
             num_targetable_sites_all = []
             for edited_base in edited_bases:
                 if edited_base not in ["A", "C", "T", "G"]:
                     raise ValueError("Specify the correct edited_base")
-                num_targetable_sites_all.append(
-                    self.guides.sequence.map(
-                        lambda s: s[editable_base_start:editable_base_end].count(
-                            edited_base
-                        )
+
+                def _count_targetable(row, eb=edited_base):
+                    base = (
+                        reverse_map[eb]
+                        if str(row.get("strand", "+")) == "-"
+                        else eb
                     )
+                    return row[seq_col][editable_base_start:editable_base_end].count(base)
+
+                num_targetable_sites_all.append(
+                    self.guides.apply(_count_targetable, axis=1)
                 )
             num_targetable_sites = pd.concat(num_targetable_sites_all, axis=1).sum(
                 axis=1
             )
+            if (num_targetable_sites == 0).all():
+                raise ValueError(
+                    f"No editable bases found in {seq_col}[{editable_base_start}:"
+                    f"{editable_base_end}] for any guide. Check that the window and "
+                    f"rel_pos_is_reporter match how .layers['{edit_layer}'] was built."
+                )
         if unsorted_condition_label is not None:
             bulk_idx = np.where(
                 self.samples[condition_col]
@@ -741,25 +767,34 @@ class ReporterScreen(Screen):
 
     def filter_allele_counts_by_base(
         self,
-        target_base_edits: Dict[str, str],
+        target_base_edits: Dict[str, str] = None,
         allele_uns_key="allele_counts",
         map_to_filtered=True,
         jaccard_threshold: float = 0.5,
+        allowed_ref_base=None,
+        allowed_alt_base=None,
     ):
         """
         Filter alleles based on base change.
 
         Keyword arguments:
+        target_base_edits -- {ref: alt} mapping of base changes to KEEP (strict).
+        allowed_ref_base / allowed_alt_base -- lists of allowed sense-strand ref/alt
+            bases; use these (instead of target_base_edits) to keep ALL substitutions,
+            e.g. allowed_ref_base=allowed_alt_base=["A","C","T","G"] to drop only indels.
+            A {ref: alt} dict CANNOT express "keep all substitutions" (one alt per ref).
         map_to_filtered -- Map allele to the closest filtered allele to preserve total allele count. Ignores the case where there is no alleles filtered.
         """
         allele_count_df = self.uns[allele_uns_key].copy()
-        filtered_allele, filtered_edits = zip(
-            *allele_count_df.allele.map(
-                lambda a: filter_allele_by_base(
-                    a, allowed_base_changes=target_base_edits
-                )
+        if allowed_ref_base is not None or allowed_alt_base is not None:
+            _filt = lambda a: filter_allele_by_base(
+                a, allowed_ref_base=allowed_ref_base, allowed_alt_base=allowed_alt_base
             )
-        )
+        else:
+            _filt = lambda a: filter_allele_by_base(
+                a, allowed_base_changes=target_base_edits
+            )
+        filtered_allele, filtered_edits = zip(*allele_count_df.allele.map(_filt))
         allele_count_df.loc[:, "allele"] = filtered_allele
         # Hashing on Allele object messes up the order. Converting it to str and back to allele for groupby.
         allele_count_df["str_allele"] = allele_count_df.allele.map(str)
